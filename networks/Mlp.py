@@ -28,12 +28,12 @@ class Mlp:
             raise ValueError(f"Unknown activation: {sigma}")
         
         # JIT compile for speed
-        self.forward_jit = jit(self._forward)
-        self.forward_batch_jit = jit(vmap(self._forward, in_axes=(None, 0)))
+        self.forward_with_params_jit = jit(self._forward_with_params)
         self.forward_with_outputs_jit = jit(self._forward_with_outputs)
         self.forward_batch_with_outputs_jit = jit(vmap(self._forward_with_outputs, in_axes=(None, 0)))
         self.ntk_jit = jit(self._ntk)
         self.ntk_autodiff_jit = jit(self._ntk_autodiff)
+
         
     def _init_params(self, key):
         keys = random.split(key, self.h + 1)
@@ -55,20 +55,18 @@ class Mlp:
         return params
     
 
-
-    def _forward(self, x):
-
+    def _forward_with_params(self, params, x):
         z = x
-        for i in range(self.h):
-            z = self.activation(self.params[i] @ z) / jnp.sqrt(self.m)
-        
-        z = self.params[-1].T @ z
+        for W in params[:-1]:
+            z = self.activation(W @ z) / jnp.sqrt(self.m)
+        z = params[-1].T @ z
         return z
     
-    def forward(self, x, batch=False):
-        if batch:
-            return self.forward_batch_jit(x)
-        return self.forward_jit(x)
+    def forward_with_params(self, params, x):
+        return self.forward_with_params_jit(params, x)
+    
+    def forward(self, x):
+        return self.forward_with_params_jit(self.params, x)
     
 
 

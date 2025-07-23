@@ -20,7 +20,7 @@ class Mlp:
 
         if sigma.lower() == "relu":
             self.activation = jax.nn.relu
-            self.activation_prime = lambda x: (x > 0).astype(jnp.float32)
+            self.activation_prime = lambda x: jnp.where(x > 0, 1.0, 0.0)
         elif sigma.lower() == "tanh":
             self.activation = jnp.tanh
             self.activation_prime = lambda x: 1 - jnp.tanh(x)**2
@@ -98,11 +98,9 @@ class Mlp:
         ntk = intermediates_l[-1].T @ intermediates_r[-1] # G^(H + 1)
 
         # initialize prefixes
-        last_hidden_l = intermediates_l[-2]
-        last_hidden_r = intermediates_r[-2]
         
-        prefix_l = jnp.diag(self.activation_prime(self.params[-2] @ last_hidden_l).flatten()) @ self.params[-1] / jnp.sqrt(self.m) # .flatten() because @ returns a (n, 1)-shaped element here
-        prefix_r = jnp.diag(self.activation_prime(self.params[-2] @ last_hidden_r).flatten()) @ self.params[-1] / jnp.sqrt(self.m)
+        prefix_l = jnp.diag(self.activation_prime(self.params[-2] @ intermediates_l[-2]).flatten()) @ self.params[-1] / jnp.sqrt(self.m) # .flatten() because @ returns a (n, 1)-shaped element here
+        prefix_r = jnp.diag(self.activation_prime(self.params[-2] @ intermediates_r[-2]).flatten()) @ self.params[-1] / jnp.sqrt(self.m)
         
         for layer in range(self.h - 1, -1, -1):
 
@@ -113,7 +111,7 @@ class Mlp:
                     prev_layer_l = x_l
                     prev_layer_r = x_r
                 else:
-                    prev_layer_l = intermediates_l[layer-2]  # Fix: layer-2 not layer
+                    prev_layer_l = intermediates_l[layer-2]
                     prev_layer_r = intermediates_r[layer-2]
                 
                 prefix_l = jnp.diag(self.activation_prime(self.params[layer-1] @ prev_layer_l).flatten()) @ self.params[layer].T @ prefix_l / jnp.sqrt(self.m)

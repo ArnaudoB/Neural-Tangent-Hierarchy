@@ -82,6 +82,9 @@ class GradientFlow:
     def get_current_loss(self, params):
         return self.compute_loss_on_params(params, self.x, self.y)
     
+
+# TODO : Start the experiments on the NTK, try and rediscover the known results
+    
     
 if __name__ == '__main__':
     from networks.Mlp import Mlp

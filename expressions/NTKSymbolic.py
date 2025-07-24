@@ -108,5 +108,3 @@ if __name__ == '__main__':
     print("Finished expression computing")
     print(expr.evaluate_expression(ntk_expr, mlp.params, x, y, intermediates_l, intermediates_r, mlp.activation_prime))
     print(mlp.ntk_autodiff(x_jax, y_jax))
-
-# TODO: Create a SymbolFactory class and an ExpressionEvaluator class for more clarity

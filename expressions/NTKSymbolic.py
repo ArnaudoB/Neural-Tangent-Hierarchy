@@ -11,8 +11,8 @@ class NTKSymbolic:
         self.d = d
         self.m = m  
         self.h = h
-        self._expression_cache = {}  # Better name than exprs
-        self._symbol_factory = SymbolFactory(d, m, h)  # Delegate symbol creation
+        self._expression_cache = {}
+        self._symbol_factory = SymbolFactory(d, m, h) 
     
     def get_ntk_expression(self, k: int):
         """Get cached or compute NTK expression for kernel k."""

@@ -2,7 +2,6 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 from jax.tree_util import tree_map, tree_leaves
-from networks.Mlp import Mlp
 
 class GradientFlow:
 
@@ -22,7 +21,7 @@ class GradientFlow:
         
         # create loss-and-grad function just once
         def loss_on_params(params):
-            preds = self.model.forward_with_params(self.x, params)
+            preds = self.model.forward_with_params(params, self.x)
             return self.loss_fn(preds, self.y)
 
         self.loss_and_grad_fn = jax.jit(jax.value_and_grad(loss_on_params))

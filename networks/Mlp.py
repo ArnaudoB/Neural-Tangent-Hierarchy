@@ -1,10 +1,10 @@
 import jax
 import jax.numpy as jnp
-from jax import random, jit, vmap
+from jax import random
+from functools import partial
 
 
 class Mlp:
-
 
     def __init__(self, d: int, m: int, h: int, sigma: str, sigma_w: float, sigma_a: float, key=None):
         self.d = d
@@ -26,15 +26,8 @@ class Mlp:
             self.activation_prime = lambda x: 1 - jnp.tanh(x)**2
         else :
             raise ValueError(f"Unknown activation: {sigma}")
-        
-        # JIT compile for speed
-        self.forward_with_params_jit = jit(self._forward_with_params)
-        self.forward_with_outputs_jit = jit(self._forward_with_outputs)
-        self.forward_batch_with_outputs_jit = jit(vmap(self._forward_with_outputs, in_axes=(None, 0)))
-        self.ntk_jit = jit(self._ntk)
-        self.ntk_autodiff_jit = jit(self._ntk_autodiff)
 
-        
+
     def _init_params(self, key):
         keys = random.split(key, self.h + 1)
         params = []
@@ -54,99 +47,92 @@ class Mlp:
         
         return params
     
-
-    def _forward_with_params(self, params, x):
+    @staticmethod
+    @partial(jax.jit, static_argnames=["activation", "h", "m"])
+    def _forward_with_params(x, params, activation, h, m):
         z = x
         for W in params[:-1]:
-            z = self.activation(W @ z) / jnp.sqrt(self.m)
+            z = activation(W @ z) / jnp.sqrt(m)
         z = params[-1].T @ z
         return z
     
-    def forward_with_params(self, params, x):
-        return self.forward_with_params_jit(params, x)
+    def forward_with_params(self, x, params):
+        return Mlp._forward_with_params(x, params, self.activation, self.h, self.m)
     
     def forward(self, x):
-        return self.forward_with_params_jit(self.params, x)
+        return Mlp._forward_with_params(x, self.params)
     
 
-
-    def _forward_with_outputs(self, x):
+    @staticmethod
+    @partial(jax.jit, static_argnames=["activation", "h", "m"])
+    def _forward_with_outputs(x, params, activation, h, m):
         z = x
-        intermediates = jnp.zeros((self.h, self.m, 1))
-        for i in range(self.h):
-            z = self.activation(self.params[i] @ z) / jnp.sqrt(self.m)
+        intermediates = jnp.zeros((h, m, 1))
+        for i in range(h):
+            z = activation(params[i] @ z) / jnp.sqrt(m)
             intermediates = intermediates.at[i].set(z)
-        
-        z = self.params[-1].T @ z
-
+        z = params[-1].T @ z
         return z, intermediates
         
     
-    def forward_with_outputs(self, x, batch=False):
-        if batch:
-            return self.forward_batch_with_outputs_jit(x)
-        return self.forward_with_outputs_jit(x)
+    def forward_with_outputs(self, x):
+        return Mlp._forward_with_outputs(x, self.params, self.activation, self.h, self.m)
     
 
-    
+    @staticmethod
+    @partial(jax.jit, static_argnames=["activation_prime", "h", "m"])
+    def _ntk(x_l, x_r, intermediate_outputs_l, intermediate_outputs_r, params, activation_prime, h, m):
 
-    def _ntk(self, x_l, x_r):
-
-        _, intermediates_l = self.forward_with_outputs(x_l)
-        _, intermediates_r = self.forward_with_outputs(x_r)
-
-        ntk = intermediates_l[-1].T @ intermediates_r[-1] # G^(H + 1)
+        sqrt_m = jnp.sqrt(m)
+        ntk = intermediate_outputs_l[-1].T @ intermediate_outputs_r[-1] # G^(H + 1)
 
         # initialize prefixes
         
-        prefix_l = jnp.diag(self.activation_prime(self.params[-2] @ intermediates_l[-2]).flatten()) @ self.params[-1] / jnp.sqrt(self.m) # .flatten() because @ returns a (n, 1)-shaped element here
-        prefix_r = jnp.diag(self.activation_prime(self.params[-2] @ intermediates_r[-2]).flatten()) @ self.params[-1] / jnp.sqrt(self.m)
+        prefix_l = jnp.diag(activation_prime(params[-2] @ intermediate_outputs_l[-2]).flatten()) @ params[-1] / sqrt_m  # .flatten() because @ returns a (n, 1)-shaped element here
+        prefix_r = jnp.diag(activation_prime(params[-2] @ intermediate_outputs_r[-2]).flatten()) @ params[-1] / sqrt_m 
         
-        for layer in range(self.h - 1, -1, -1):
-
+        for layer in range(h - 1, -1, -1):
             if layer > 0:
-                ntk += (prefix_l.T @ prefix_r) * (intermediates_l[layer-1].T @ intermediates_r[layer-1])
+                ntk += (prefix_l.T @ prefix_r) * (intermediate_outputs_l[layer-1].T @ intermediate_outputs_r[layer-1])
                 # update prefixes 
                 if layer == 1:
                     prev_layer_l = x_l
                     prev_layer_r = x_r
                 else:
-                    prev_layer_l = intermediates_l[layer-2]
-                    prev_layer_r = intermediates_r[layer-2]
+                    prev_layer_l = intermediate_outputs_l[layer-2]
+                    prev_layer_r = intermediate_outputs_r[layer-2]
                 
-                prefix_l = jnp.diag(self.activation_prime(self.params[layer-1] @ prev_layer_l).flatten()) @ self.params[layer].T @ prefix_l / jnp.sqrt(self.m)
-                prefix_r = jnp.diag(self.activation_prime(self.params[layer-1] @ prev_layer_r).flatten()) @ self.params[layer].T @ prefix_r / jnp.sqrt(self.m)
+                prefix_l = jnp.diag(activation_prime(params[layer-1] @ prev_layer_l).flatten()) @ params[layer].T @ prefix_l / sqrt_m 
+                prefix_r = jnp.diag(activation_prime(params[layer-1] @ prev_layer_r).flatten()) @ params[layer].T @ prefix_r / sqrt_m 
             else:
                 ntk += (prefix_l.T @ prefix_r) * (x_l.T @ x_r) # input layer
-            
         return ntk.squeeze()
 
     def ntk(self, x_l, x_r):
-        return self.ntk_jit(x_l, x_r)
+        _, intermediate_outputs_l = self.forward_with_outputs(x_l)
+        _, intermediate_outputs_r = self.forward_with_outputs(x_r)
+        return Mlp._ntk(x_l, x_r, intermediate_outputs_l, intermediate_outputs_r, self.params, self.activation_prime, self.h, self.m)
     
 
-    
-
-    def _ntk_autodiff(self, x_l, x_r):
-
-        def network_fn(params, x):
+    @staticmethod
+    @partial(jax.jit, static_argnames=["activation", "h", "m"])
+    def _ntk_autodiff(x_l, x_r, params, activation, h, m):
+        def network_fn(p, x):
             z = x
-            for i in range(self.h):
-                z = self.activation(params[i] @ z) / jnp.sqrt(self.m)
-            z = params[-1].T @ z
+            for i in range(h):
+                z = activation(p[i] @ z) / jnp.sqrt(m)
+            z = p[-1].T @ z
             return z.squeeze()
-        
         jac_fn = jax.jacfwd(network_fn, argnums=0)
-        jac_l = jac_fn(self.params, x_l)
-        jac_r = jac_fn(self.params, x_r)
-        
-        jac_l_flat = jnp.concatenate([jnp.ravel(layer_grad) for layer_grad in jac_l])
-        jac_r_flat = jnp.concatenate([jnp.ravel(layer_grad) for layer_grad in jac_r])
-        
+        jac_l = jac_fn(params, x_l)
+        jac_r = jac_fn(params, x_r)
+        jac_l_flat = jnp.concatenate([jnp.ravel(g) for g in jac_l])
+        jac_r_flat = jnp.concatenate([jnp.ravel(g) for g in jac_r])
         return jnp.dot(jac_l_flat, jac_r_flat)
+
     
     def ntk_autodiff(self, x_l, x_r):
-        return self.ntk_autodiff_jit(x_l, x_r)
+        return Mlp._ntk_autodiff(x_l, x_r, self.params, self.activation, self.h, self.m)
 
 
 

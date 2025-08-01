@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from jax.tree_util import tree_leaves
 from typing import List
 
-class NTH:
+class NTHKernel:
 
     def __init__(self, model):
         self.model = model
@@ -44,7 +44,7 @@ class NTH:
 if __name__ == "__main__":
     from networks.Mlp import Mlp
     mlp = Mlp(3, 5, 5, "relu", 1.0, 1.0)
-    hierarchy = NTH(mlp)
+    hierarchy = NTHKernel(mlp)
     x = jnp.array([[2.0], [35.0], [4.0]])
     y = jnp.array([[-1.0], [45.0], [2.0]])
     z = jnp.array([[-1.0], [8.0], [-40.0]])
